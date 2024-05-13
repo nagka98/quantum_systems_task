@@ -6,8 +6,9 @@ This is the embedded C task. The program simulates a battery
 #include<stdio.h>
 #include<string.h>
 #include<stdbool.h>
+#include<math.h>
 #include "battery_simulator.h"
-
+#include "soc_table.h"
 #include "kalman_filter.h"
 
 
@@ -23,6 +24,11 @@ typedef struct {
 */
 
 typedef struct {
+    int kal_voltage;       
+    int kal_current;    
+} kalman_values;
+
+typedef struct {
     float count;
 }kal_filter_count;
 
@@ -32,10 +38,13 @@ kal_filter_count kal_volt = {0};
 /******************************************************************************
 DEFINES
 *******************************************************************************/
+
 #define ALERT(msg, ...) printf("WARNING_ALERT :" msg , __VA_ARGS__)
 
 #define CURRENT_MODE 0
 #define VOLTAGE_MODE 1
+#define METHOD_OPENCIRCUIT 0
+#define METHOD_COLUMBCOUNT 1
 
 /******************************************************************************
 FUNCTION PROTOTYPES
@@ -43,12 +52,16 @@ FUNCTION PROTOTYPES
 
 void check_temperature(measured_values* pData);
 int kalman_filter(measured_values* pData, bool mode);
+int calculate_SOC(kalman_values* pKalData, bool method);
+int opencircuit_soc(kalman_values* pKalData);
 
 /******************************************************************************
 GLOBAL VARIABLES AND POINTERS
 *******************************************************************************/
 /*create instance to acess csv file*/
 FILE *csv_file;
+
+kalman_values g_KalValue = {0};
 
 /******************************************************************************
 FUNCTION BODY
@@ -61,7 +74,7 @@ int main(){
     measured_values data;
 
     /* create cell header for battery properties */
-    fprintf (csv_file, "Voltage, Current \n");
+    fprintf (csv_file, "SoC \n");
 
     /*Battery Simulator*/
     for (int i = 0; i < 4300; i++) 
@@ -83,18 +96,14 @@ int main(){
         int temp = kalman_filter(&data, CURRENT_MODE);
         if(temp != 0xffff)
         {
-            est_current = temp;
-            // printf("estimated current : %d\n", est_current);
+            g_KalValue.kal_current = temp;
         }
         temp = kalman_filter(&data, VOLTAGE_MODE);
         if(temp != 0xffff)
         {
-            est_voltage = temp;
-            // printf("estimated voltage : %d\n", est_voltage);
+            g_KalValue.kal_voltage = temp;
         }
-        /* print battery characterstics in csv file */      
-        fprintf (csv_file, "%d, %d \n",
-			  est_voltage, est_current);
+        fprintf(csv_file, "%f \n",calculate_SOC(&g_KalValue, METHOD_OPENCIRCUIT)*0.01f);
     }
 
     printf("End of simulation \n");
@@ -186,4 +195,40 @@ int kalman_filter(measured_values* pData, bool mode)
         return temp_pred;
     }
     return 0xffff;
+}
+
+/** TASK 3
+ * 
+ * Function calculate_SOC
+ * @param: 
+ * method[bool]: open_circuit (0), columb_counting (1)
+ * @return[int]: State of Charge percentage in integer (*10)
+ * 
+*/
+
+int calculate_SOC(kalman_values* pKalData, bool method)
+{
+    int soc_result = 0;
+    if(method == METHOD_OPENCIRCUIT)
+    {
+        soc_result = opencircuit_soc(pKalData);
+    }
+    // else{
+    //     soc_result = columbcount_soc(pData);
+    // }
+    return soc_result;
+}
+
+/**
+ * 7S2P configuration
+ * voltage of each cell : (total_voltage)/7
+*/
+int opencircuit_soc(kalman_values* pKalData)
+{
+    float cell_voltage = (float)pKalData->kal_voltage/7.0f;
+    float *pSoc_table = GetSOCTable();
+
+    float percentage = ((pSoc_table[GRP9667124_SOCTABLE_LEN - 1] - pSoc_table[0])/100.0f) * (cell_voltage - pSoc_table[0]);
+    percentage = (percentage < 0.0f)? 0.0f: percentage;
+    return floor(percentage);
 }

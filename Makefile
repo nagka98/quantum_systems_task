@@ -10,8 +10,8 @@ build/%.o: %.c
 	$(CC) -c $< -o $@
 
 out : $(OBJS)
-	$(CC) $^ -o $@
+	$(CC) $^ -lm -o $@
 
 clean:
 	rm -rf build/* 
-	rm -rf /*.csv /*.out
+	rm -rf *.csv out
