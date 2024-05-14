@@ -97,10 +97,6 @@ int main(){
         kalvalue.last_timestamp = kalvalue.curr_timesetamp;
         kalvalue.curr_timesetamp = data.timestamp;
 
-        // printf ("Timestamp: %f, Voltage: %d, Current: %d, Temperature: %d \n",
-		// 	  data.timestamp, data.voltage, data.current,
-		// 	  data.temperature);
-
         check_temperature(&data);
 
         int temp = kalman_filter(&data, CURRENT_MODE);
@@ -120,11 +116,10 @@ int main(){
         {
             current_soc = calculate_SOC(&kalvalue);
             kalman_sweep_cplt = 0;
-            // printf("current_soc = %d \n",current_soc);
             fprintf(csv_file, "%0.2f \n",current_soc*0.01f);
+            printf("battery capacity left (%): %0.2f\n",current_soc*0.01f);
         }
     }
-    printf("End of simulation \n");
     fclose(csv_file);
     return 0;
 }
@@ -248,7 +243,6 @@ int calculate_SOC(calc_values* pKalData)
         initial_sweep = true;
         pKalData->initial_soc = opencircuit_soc(pKalData);
         pKalData->initial_soc_flag = true;
-        printf("initial sweep : %d \n", pKalData->initial_soc);
     }
 
     int soc_result = columbcount_soc(pKalData);
@@ -293,6 +287,5 @@ int columbcount_soc(calc_values* pKalData)
     columb_consumed += (float)(pKalData->curr_timesetamp - pKalData->last_timestamp) * (float)(pKalData->kal_current * 0.001f);
     float soc_left = (batt_capcity_left - columb_consumed) * (100.0f/TOTAL_COLUMB);
     soc_left = (soc_left > 0.0f)? soc_left : 0.0f;
-    printf("soc left : %0.2f\n",soc_left);
     return (int)(soc_left * 100);
 }
