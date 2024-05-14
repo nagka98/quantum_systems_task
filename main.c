@@ -48,7 +48,7 @@ DEFINES
 #define CURRENT_MODE 0
 #define VOLTAGE_MODE 1
 
-#define TOTAL_COLUMB 164500.0f
+#define TOTAL_COLUMB 84600.0f
 
 /******************************************************************************
 FUNCTION PROTOTYPES
@@ -120,7 +120,7 @@ int main(){
         {
             current_soc = calculate_SOC(&kalvalue);
             kalman_sweep_cplt = 0;
-            printf("current_soc = %d \n",current_soc);
+            // printf("current_soc = %d \n",current_soc);
             fprintf(csv_file, "%0.2f \n",current_soc*0.01f);
         }
     }
@@ -175,6 +175,7 @@ void check_temperature(measured_values* pData)
  * Third party kalman filter modified with default values from @https://gist.github.com/jannson/9951716
  * 
  * Function kalman_filter
+ * 
  * @param: 
  * pdata[measured_values*]: pointer towards battery data
  * mode[bool]: current 0, voltage 1
@@ -217,7 +218,11 @@ int kalman_filter(measured_values* pData, bool mode)
 
 /** TASK 3
  * 
- * Function calculate_SOC
+ * Function calculate_SOC()
+ * 
+ * implementation follows two stages
+ * 1) get current estimate by open circuit voltage analysis
+ * 2) get SoC during battery discharge by columb counting 
  * @param: 
  * method[bool]: open_circuit (0), columb_counting (1)
  * @return[int]: State of Charge percentage in integer (*10)
@@ -241,6 +246,8 @@ int calculate_SOC(calc_values* pKalData)
 }
 
 /**
+ * Function opencircuit_soc()
+ * 
  * 7S2P configuration
  * voltage of each cell : (total_voltage)/7
 */
@@ -262,15 +269,20 @@ int opencircuit_soc(calc_values* pKalData)
     return 0xffff;
 }
 
-/**ref from datasheet Specification (nominal capacity : 11750mAh,26.95V, 7s2p)
- * total columb capacity of battery : 11750 * 7 * 2 = 164500 columbs
+/**
+ * function columbcount_soc()
+ * 
+ * ref from datasheet Specification (nominal capacity : 11750mAh,26.95V, 7s1p)
+ * total columb capacity of 7s2p battery as per seconds : 11.750 * 2 * 60 * 60 = 84600.000f columbs @TOTAL_COLUMB
+ * removing time integrated current from total columb capacity gives remaining capacity
 */
 int columbcount_soc(calc_values* pKalData)
 {   
     static float columb_consumed = 0.0f;
     float batt_capcity_left = TOTAL_COLUMB - ((100 - pKalData->initial_soc)*0.01*TOTAL_COLUMB);
-    columb_consumed += (pKalData->curr_timesetamp - pKalData->last_timestamp) * (float)(pKalData->kal_current * 0.001f);
-    float soc_left = (batt_capcity_left - columb_consumed) * 100.0f/TOTAL_COLUMB;
+    columb_consumed += (float)(pKalData->curr_timesetamp - pKalData->last_timestamp) * (float)(pKalData->kal_current * 0.001f);
+    float soc_left = (batt_capcity_left - columb_consumed) * (100.0f/TOTAL_COLUMB);
     soc_left = (soc_left > 0.0f)? soc_left : 0.0f;
+    printf("soc left : %0.2f\n",soc_left);
     return (int)(soc_left * 100);
 }
