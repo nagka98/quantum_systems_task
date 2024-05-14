@@ -220,9 +220,19 @@ int kalman_filter(measured_values* pData, bool mode)
  * 
  * Function calculate_SOC()
  * 
- * implementation follows two stages
+ * @implementation:
+ * follows two stages
  * 1) get current estimate by open circuit voltage analysis
  * 2) get SoC during battery discharge by columb counting 
+ * 
+ * @limitations: 
+ * ->this method does not consider aging factor of battery
+ * ->not every battery battery is ideal. tolerances should be adjusted
+ * ->completely depends on initial consumption calculation
+ * ->battery lifetime can also be affected by operating temperature(not considered)
+ * 
+ * filtered outputs provide better estimation of soc
+ * 
  * @param: 
  * method[bool]: open_circuit (0), columb_counting (1)
  * @return[int]: State of Charge percentage in integer (*10)
