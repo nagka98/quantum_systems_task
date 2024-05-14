@@ -25,8 +25,12 @@ typedef struct {
 
 typedef struct {
     int kal_voltage;       
-    int kal_current;    
-} kalman_values;
+    int kal_current;   
+    int initial_soc;
+    bool initial_soc_flag; 
+    int curr_timesetamp;
+    int last_timestamp;
+} calc_values;
 
 typedef struct {
     float count;
@@ -43,8 +47,8 @@ DEFINES
 
 #define CURRENT_MODE 0
 #define VOLTAGE_MODE 1
-#define METHOD_OPENCIRCUIT 0
-#define METHOD_COLUMBCOUNT 1
+
+#define TOTAL_COLUMB 164500.0f
 
 /******************************************************************************
 FUNCTION PROTOTYPES
@@ -52,8 +56,9 @@ FUNCTION PROTOTYPES
 
 void check_temperature(measured_values* pData);
 int kalman_filter(measured_values* pData, bool mode);
-int calculate_SOC(kalman_values* pKalData, bool method);
-int opencircuit_soc(kalman_values* pKalData);
+int calculate_SOC(calc_values* pKalData);
+int opencircuit_soc(calc_values* pKalData);
+int columbcount_soc(calc_values* pKalData);
 
 /******************************************************************************
 GLOBAL VARIABLES AND POINTERS
@@ -61,13 +66,13 @@ GLOBAL VARIABLES AND POINTERS
 /*create instance to acess csv file*/
 FILE *csv_file;
 
-kalman_values g_KalValue = {0};
-
 /******************************************************************************
 FUNCTION BODY
 *******************************************************************************/
 int main(){
     int est_current, est_voltage = 0;
+
+    calc_values kalvalue = {0};
 
     /* open csv file */
     csv_file = fopen("battery_log.csv", "w");
@@ -75,6 +80,8 @@ int main(){
 
     /* create cell header for battery properties */
     fprintf (csv_file, "SoC \n");
+
+    int current_soc, kalman_sweep_cplt = 0;
 
     /*Battery Simulator*/
     for (int i = 0; i < 4300; i++) 
@@ -87,6 +94,9 @@ int main(){
         /* receive model data from battery simulator */
         measure(&data);
 
+        kalvalue.last_timestamp = kalvalue.curr_timesetamp;
+        kalvalue.curr_timesetamp = data.timestamp;
+
         // printf ("Timestamp: %f, Voltage: %d, Current: %d, Temperature: %d \n",
 		// 	  data.timestamp, data.voltage, data.current,
 		// 	  data.temperature);
@@ -96,16 +106,24 @@ int main(){
         int temp = kalman_filter(&data, CURRENT_MODE);
         if(temp != 0xffff)
         {
-            g_KalValue.kal_current = temp;
+            kalvalue.kal_current = temp;
+            kalman_sweep_cplt++;
         }
         temp = kalman_filter(&data, VOLTAGE_MODE);
         if(temp != 0xffff)
         {
-            g_KalValue.kal_voltage = temp;
+            kalvalue.kal_voltage = temp;
+            kalman_sweep_cplt++;
         }
-        fprintf(csv_file, "%f \n",calculate_SOC(&g_KalValue, METHOD_OPENCIRCUIT)*0.01f);
-    }
 
+        if(kalman_sweep_cplt >= 2)
+        {
+            current_soc = calculate_SOC(&kalvalue);
+            kalman_sweep_cplt = 0;
+            printf("current_soc = %d \n",current_soc);
+            fprintf(csv_file, "%0.2f \n",current_soc*0.01f);
+        }
+    }
     printf("End of simulation \n");
     fclose(csv_file);
     return 0;
@@ -206,16 +224,19 @@ int kalman_filter(measured_values* pData, bool mode)
  * 
 */
 
-int calculate_SOC(kalman_values* pKalData, bool method)
+int calculate_SOC(calc_values* pKalData)
 {
-    int soc_result = 0;
-    if(method == METHOD_OPENCIRCUIT)
+    static bool initial_sweep = false;
+
+    if(!initial_sweep)
     {
-        soc_result = opencircuit_soc(pKalData);
+        initial_sweep = true;
+        pKalData->initial_soc = opencircuit_soc(pKalData);
+        pKalData->initial_soc_flag = true;
+        printf("initial sweep : %d \n", pKalData->initial_soc);
     }
-    // else{
-    //     soc_result = columbcount_soc(pData);
-    // }
+
+    int soc_result = columbcount_soc(pKalData);
     return soc_result;
 }
 
@@ -223,12 +244,33 @@ int calculate_SOC(kalman_values* pKalData, bool method)
  * 7S2P configuration
  * voltage of each cell : (total_voltage)/7
 */
-int opencircuit_soc(kalman_values* pKalData)
+int opencircuit_soc(calc_values* pKalData)
 {
     float cell_voltage = (float)pKalData->kal_voltage/7.0f;
-    float *pSoc_table = GetSOCTable();
 
-    float percentage = ((pSoc_table[GRP9667124_SOCTABLE_LEN - 1] - pSoc_table[0])/100.0f) * (cell_voltage - pSoc_table[0]);
-    percentage = (percentage < 0.0f)? 0.0f: percentage;
-    return floor(percentage);
+    float *pSoc_table = GetSOCTable();
+    float temp_v1 = 0;
+
+    for(int i = 0; i < GRP9667124_SOCTABLE_LEN; i++)
+    {
+        temp_v1 = cell_voltage - pSoc_table[i];
+        if(temp_v1 < 0.0f)
+        {
+            return i;
+        }
+    }
+    return 0xffff;
+}
+
+/**ref from datasheet Specification (nominal capacity : 11750mAh,26.95V, 7s2p)
+ * total columb capacity of battery : 11750 * 7 * 2 = 164500 columbs
+*/
+int columbcount_soc(calc_values* pKalData)
+{   
+    static float columb_consumed = 0.0f;
+    float batt_capcity_left = TOTAL_COLUMB - ((100 - pKalData->initial_soc)*0.01*TOTAL_COLUMB);
+    columb_consumed += (pKalData->curr_timesetamp - pKalData->last_timestamp) * (float)(pKalData->kal_current * 0.001f);
+    float soc_left = (batt_capcity_left - columb_consumed) * 100.0f/TOTAL_COLUMB;
+    soc_left = (soc_left > 0.0f)? soc_left : 0.0f;
+    return (int)(soc_left * 100);
 }
